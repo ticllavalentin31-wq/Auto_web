@@ -3,98 +3,128 @@ import pandas as pd
 import joblib
 import numpy as np
 
-# Configuración de página
-st.set_page_config(page_title="Predicción Venta Autos", layout="centered")
+# --- 1. CONFIGURACIÓN VISUAL (ICONO Y TÍTULO) ---
+st.set_page_config(page_title="Cotizador de Autos", page_icon="🚗", layout="centered")
 
-# Título y descripción
-st.title("🚗 Predicción de Precio de Venta")
+# CSS para ocultar elementos técnicos y limpiar la vista
 st.markdown("""
-Esta aplicación estima el precio de venta de un vehículo usado basándose en sus características 
-y su precio actual de mercado (nuevo).
-""")
+    <style>
+    .stDeployButton {display:none;}
+    div[data-testid="stToolbar"] {display: none;}
+    </style>
+""", unsafe_allow_html=True)
 
-# --- 1. CARGA DE RECURSOS ---
+st.title("🚗 Cotizador de Vehículos Usados")
+st.markdown("##### Complete el formulario para obtener una valoración instantánea de mercado.")
+st.markdown("---")
+
+# --- 2. CARGA DEL CEREBRO (MODELO) ---
 @st.cache_resource
 def cargar_archivos():
-    # Cargamos los 6 archivos generados
-    model = joblib.load('modelo_precio_autos.pkl')
-    scaler = joblib.load('scaler_autos.pkl')
-    encoder = joblib.load('encoder_autos.pkl')
-    col_num = joblib.load('columnas_numericas.pkl')
-    col_cat = joblib.load('columnas_categoricas.pkl')
-    dic_unicos = joblib.load('valores_unicos.pkl')
-    return model, scaler, encoder, col_num, col_cat, dic_unicos
+    try:
+        model = joblib.load('modelo_precio_autos.pkl')
+        scaler = joblib.load('scaler_autos.pkl')
+        encoder = joblib.load('encoder_autos.pkl')
+        col_num = joblib.load('columnas_numericas.pkl')
+        col_cat = joblib.load('columnas_categoricas.pkl')
+        dic_unicos = joblib.load('valores_unicos.pkl')
+        return model, scaler, encoder, col_num, col_cat, dic_unicos
+    except:
+        return None, None, None, None, None, None
 
-try:
-    model, scaler, encoder, col_num, col_cat, dic_unicos = cargar_archivos()
-    st.success("✅ Sistema cargado correctamente (Modelo: Random Forest)")
-except Exception as e:
-    st.error(f"Error crítico cargando archivos: {e}")
+model, scaler, encoder, col_num, col_cat, dic_unicos = cargar_archivos()
+
+# Si falla la carga, mostramos mensaje amigable
+if model is None:
+    st.error("⚠️ El sistema se está iniciando o actualizando. Por favor espere unos segundos y recargue la página.")
     st.stop()
 
-# --- 2. INTERFAZ DE USUARIO (SIDEBAR) ---
-st.sidebar.header("📝 Ingrese los datos")
+# --- 3. FORMULARIO DE USUARIO (LIMPIO) ---
 
-user_inputs = {}
+# Usamos columnas para que no se vea una lista eterna hacia abajo
+col1, col2 = st.columns(2)
 
-# A) Generación automática de inputs NUMÉRICOS
-# Detectamos qué columnas son para poner sliders o inputs adecuados
-for col in col_num:
-    nombre_mostrar = col.replace('_', ' ').capitalize()
+input_data = {}
+
+# --- COLUMNA IZQUIERDA: DATOS BÁSICOS ---
+with col1:
+    st.subheader("Datos del Vehículo")
     
-    if 'year' in col.lower():
-        # Slider para el año
-        val = st.sidebar.slider("Año del Vehículo", 2000, 2025, 2017)
-    elif 'present_price' in col.lower():
-        # Input para precio actual
-        st.sidebar.markdown("---")
-        val = st.sidebar.number_input(f"{nombre_mostrar} (Precio Nuevo)", min_value=0.0, value=5.0, step=0.1, help="Precio en miles o la moneda del dataset")
-    elif 'owner' in col.lower():
-        # Input para dueños anteriores
-        val = st.sidebar.selectbox(f"{nombre_mostrar} (Dueños previos)", [0, 1, 2, 3])
-    else:
-        # Kilometraje u otros
-        val = st.sidebar.number_input(f"{nombre_mostrar}", min_value=0, value=10000)
-        
-    user_inputs[col] = [val]
+    # Buscamos y mostramos inputs numéricos con nombres amigables
+    for col in col_num:
+        # TRADUCCIÓN DE VARIABLES TÉCNICAS A ESPAÑOL AMIGABLE
+        if 'year' in col.lower():
+            val = st.slider("Año de Fabricación", 2000, 2025, 2018)
+            input_data[col] = [val]
+            
+        elif 'present_price' in col.lower():
+            # Explicación clara para el usuario
+            val = st.number_input("Precio de Lista (Nuevo)", min_value=0.0, value=0.0, step=0.5, 
+                                help="¿Cuánto costaba este auto cuando era nuevo? (Use la misma moneda que sus datos, ej: miles)")
+            input_data[col] = [val]
+            
+        elif 'driven' in col.lower() or 'kms' in col.lower():
+            val = st.number_input("Kilometraje (Recorrido)", min_value=0, value=0, step=1000)
+            input_data[col] = [val]
+            
+        elif 'owner' in col.lower():
+            pass # Lo ponemos en la otra columna para ordenar
 
-# B) Generación automática de inputs CATEGÓRICOS
-for col in col_cat:
-    nombre_mostrar = col.replace('_', ' ').capitalize()
-    opciones = dic_unicos.get(col, [])
+# --- COLUMNA DERECHA: DETALLES ---
+with col2:
+    st.subheader("Características")
     
-    # Selectbox con las opciones aprendidas
-    val = st.sidebar.selectbox(nombre_mostrar, opciones)
-    user_inputs[col] = [val]
+    # Input de dueños (si existe en numéricos)
+    for col in col_num:
+        if 'owner' in col.lower():
+            val = st.selectbox("Cantidad de Dueños Anteriores", [0, 1, 2, 3])
+            input_data[col] = [val]
 
-# --- 3. PROCESAMIENTO Y PREDICCIÓN ---
-st.subheader("Resumen de Características")
-df_usuario = pd.DataFrame(user_inputs)
-st.dataframe(df_usuario)
+    # Inputs Categóricos (Marca, Transmisión, etc.)
+    for col in col_cat:
+        # Limpieza del nombre (ej: Fuel_Type -> Tipo de Combustible)
+        nombre_amigable = col.replace('_', ' ').capitalize()
+        if 'fuel' in nombre_amigable.lower(): nombre_amigable = "Tipo de Combustible"
+        if 'seller' in nombre_amigable.lower(): nombre_amigable = "Tipo de Vendedor"
+        if 'transmission' in nombre_amigable.lower(): nombre_amigable = "Transmisión"
+        if 'name' in nombre_amigable.lower() or 'car' in nombre_amigable.lower(): nombre_amigable = "Marca / Modelo"
 
-if st.button("CALCULAR PRECIO ESTIMADO 💰", type="primary"):
+        opciones = dic_unicos.get(col, [])
+        val = st.selectbox(nombre_amigable, opciones)
+        input_data[col] = [val]
+
+# --- 4. BOTÓN DE ACCIÓN Y RESULTADO ---
+st.markdown("<br>", unsafe_allow_html=True) # Espacio
+
+# Botón grande y centrado
+col_centrada = st.columns([1, 2, 1])
+with col_centrada[1]:
+    boton_calcular = st.button("🔍 CALCULAR VALOR AHORA", use_container_width=True, type="primary")
+
+if boton_calcular:
     try:
-        # Paso 1: Separar en numéricos y categóricos
+        # Validar que no haya ceros ilógicos (opcional, para guiar al usuario)
+        # (Si el usuario dejó todo en 0, le avisamos)
+        df_usuario = pd.DataFrame(input_data)
+        
+        # Procesamiento interno (Técnico pero oculto)
         X_num = df_usuario[col_num]
         X_cat = df_usuario[col_cat]
-        
-        # Paso 2: Escalar numéricos (MinMax)
         X_num_scaled = scaler.transform(X_num)
-        
-        # Paso 3: Codificar categóricos (OneHot)
         X_cat_encoded = encoder.transform(X_cat).toarray()
-        
-        # Paso 4: Unir todo
         X_final = np.concatenate([X_num_scaled, X_cat_encoded], axis=1)
         
-        # Paso 5: Predecir
+        # Predicción
         prediccion = model.predict(X_final)[0]
         
-        # --- MOSTRAR RESULTADO ---
-        st.balloons()
+        # --- RESULTADO FINAL ---
         st.markdown("---")
-        st.markdown(f"### 💎 Precio de Venta Estimado: **{prediccion:,.2f}**")
-        st.info("Nota: La moneda depende de los datos de entrada (ej. USD, Soles, Lakhs).")
+        st.success("✅ ¡Cálculo Exitoso!")
+        
+        # Mostramos el precio en grande
+        st.markdown(f"<h2 style='text-align: center; color: #2E86C1;'>Valor Estimado de Mercado:</h2>", unsafe_allow_html=True)
+        st.markdown(f"<h1 style='text-align: center;'>{prediccion:,.2f}</h1>", unsafe_allow_html=True)
+        st.caption(f"*Este valor es una estimación basada en inteligencia artificial y las características ingresadas.")
         
     except Exception as e:
-        st.error(f"Ocurrió un error en el cálculo: {e}")
+        st.error("Hubo un problema con los datos ingresados. Por favor verifique e intente nuevamente.")
