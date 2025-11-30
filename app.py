@@ -3,10 +3,10 @@ import pandas as pd
 import joblib
 import numpy as np
 
-# --- 1. CONFIGURACIÓN VISUAL (ICONO Y TÍTULO) ---
+# --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Cotizador de Autos", page_icon="🚗", layout="centered")
 
-# CSS para ocultar elementos técnicos y limpiar la vista
+# Estilos CSS para limpiar la interfaz
 st.markdown("""
     <style>
     .stDeployButton {display:none;}
@@ -15,10 +15,10 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("🚗 Cotizador de Vehículos Usados")
-st.markdown("##### Complete el formulario para obtener una valoración instantánea de mercado.")
+st.markdown("##### Complete el formulario para obtener una valoración instantánea.")
 st.markdown("---")
 
-# --- 2. CARGA DEL CEREBRO (MODELO) ---
+# --- CARGA DE ARCHIVOS ---
 @st.cache_resource
 def cargar_archivos():
     try:
@@ -34,80 +34,86 @@ def cargar_archivos():
 
 model, scaler, encoder, col_num, col_cat, dic_unicos = cargar_archivos()
 
-# Si falla la carga, mostramos mensaje amigable
 if model is None:
-    st.error("⚠️ El sistema se está iniciando o actualizando. Por favor espere unos segundos y recargue la página.")
+    st.error("⚠️ Error: No se encontraron los archivos del modelo. Asegúrese de que estén en la misma carpeta.")
     st.stop()
 
-# --- 3. FORMULARIO DE USUARIO (LIMPIO) ---
+# --- DICCIONARIO DE TRADUCCIÓN (LA SOLUCIÓN) ---
+# Aquí definimos qué texto mostrar por cada columna técnica
+NOMBRES_AMIGABLES = {
+    # Categóricas
+    'Car_Name': 'Seleccionar Marca / Modelo',
+    'Fuel_Type': 'Seleccionar Tipo de Combustible',
+    'Seller_Type': 'Seleccionar Vendedor',
+    'Transmission': 'Seleccionar Transmisión',
+    
+    # Numéricas
+    'Year': 'Seleccionar Año de Fabricación',
+    'Present_Price': 'Ingrese Precio de Lista (Nuevo)',
+    'Kms_Driven': 'Ingrese Kilometraje',
+    'Owner': 'Seleccionar Dueños Anteriores'
+}
 
-# Usamos columnas para que no se vea una lista eterna hacia abajo
+# --- FORMULARIO ---
 col1, col2 = st.columns(2)
-
 input_data = {}
 
-# --- COLUMNA IZQUIERDA: DATOS BÁSICOS ---
+# Lógica para mostrar inputs
 with col1:
-    st.subheader("Datos del Vehículo")
+    st.subheader("Datos Básicos")
     
-    # Buscamos y mostramos inputs numéricos con nombres amigables
     for col in col_num:
-        # TRADUCCIÓN DE VARIABLES TÉCNICAS A ESPAÑOL AMIGABLE
+        # Buscamos el nombre bonito, si no existe, usamos el original
+        etiqueta = NOMBRES_AMIGABLES.get(col, col)
+        
+        # Detectamos nombres clave para dar el input correcto
         if 'year' in col.lower():
-            val = st.slider("Año de Fabricación", 2000, 2025, 2018)
+            val = st.slider(etiqueta, 2000, 2025, 2018)
             input_data[col] = [val]
             
         elif 'present_price' in col.lower():
-            # Explicación clara para el usuario
-            val = st.number_input("Precio de Lista (Nuevo)", min_value=0.0, value=0.0, step=0.5, 
-                                help="¿Cuánto costaba este auto cuando era nuevo? (Use la misma moneda que sus datos, ej: miles)")
+            val = st.number_input(etiqueta, min_value=0.0, value=5.0, step=0.5, 
+                                help="Precio del auto cuando era nuevo (en miles)")
             input_data[col] = [val]
             
         elif 'driven' in col.lower() or 'kms' in col.lower():
-            val = st.number_input("Kilometraje (Recorrido)", min_value=0, value=0, step=1000)
+            val = st.number_input(etiqueta, min_value=0, value=20000, step=1000)
             input_data[col] = [val]
             
         elif 'owner' in col.lower():
-            pass # Lo ponemos en la otra columna para ordenar
+            pass # Lo pasamos a la columna derecha
 
-# --- COLUMNA DERECHA: DETALLES ---
 with col2:
-    st.subheader("Características")
+    st.subheader("Detalles")
     
-    # Input de dueños (si existe en numéricos)
+    # 1. Poner el "Owner" aquí si existe
     for col in col_num:
         if 'owner' in col.lower():
-            val = st.selectbox("Cantidad de Dueños Anteriores", [0, 1, 2, 3])
+            etiqueta = NOMBRES_AMIGABLES.get(col, "Seleccionar Dueños")
+            val = st.selectbox(etiqueta, [0, 1, 2, 3])
             input_data[col] = [val]
 
-    # Inputs Categóricos (Marca, Transmisión, etc.)
+    # 2. Poner las Categóricas (Marca, Combustible, etc.)
     for col in col_cat:
-        # Limpieza del nombre (ej: Fuel_Type -> Tipo de Combustible)
-        nombre_amigable = col.replace('_', ' ').capitalize()
-        if 'fuel' in nombre_amigable.lower(): nombre_amigable = "Tipo de Combustible"
-        if 'seller' in nombre_amigable.lower(): nombre_amigable = "Tipo de Vendedor"
-        if 'transmission' in nombre_amigable.lower(): nombre_amigable = "Transmisión"
-        if 'name' in nombre_amigable.lower() or 'car' in nombre_amigable.lower(): nombre_amigable = "Marca / Modelo"
-
+        etiqueta = NOMBRES_AMIGABLES.get(col, col) # Obtiene el nombre bonito
         opciones = dic_unicos.get(col, [])
-        val = st.selectbox(nombre_amigable, opciones)
+        
+        # Selectbox con etiqueta clara
+        val = st.selectbox(etiqueta, opciones)
         input_data[col] = [val]
 
-# --- 4. BOTÓN DE ACCIÓN Y RESULTADO ---
-st.markdown("<br>", unsafe_allow_html=True) # Espacio
+# --- BOTÓN Y RESULTADO ---
+st.markdown("<br>", unsafe_allow_html=True)
 
-# Botón grande y centrado
-col_centrada = st.columns([1, 2, 1])
-with col_centrada[1]:
-    boton_calcular = st.button("🔍 CALCULAR VALOR AHORA", use_container_width=True, type="primary")
+_, col_btn, _ = st.columns([1, 2, 1])
+with col_btn:
+    boton = st.button("CALCULAR PRECIO", type="primary", use_container_width=True)
 
-if boton_calcular:
+if boton:
     try:
-        # Validar que no haya ceros ilógicos (opcional, para guiar al usuario)
-        # (Si el usuario dejó todo en 0, le avisamos)
         df_usuario = pd.DataFrame(input_data)
         
-        # Procesamiento interno (Técnico pero oculto)
+        # Procesamiento
         X_num = df_usuario[col_num]
         X_cat = df_usuario[col_cat]
         X_num_scaled = scaler.transform(X_num)
@@ -117,14 +123,10 @@ if boton_calcular:
         # Predicción
         prediccion = model.predict(X_final)[0]
         
-        # --- RESULTADO FINAL ---
         st.markdown("---")
-        st.success("✅ ¡Cálculo Exitoso!")
-        
-        # Mostramos el precio en grande
-        st.markdown(f"<h2 style='text-align: center; color: #2E86C1;'>Valor Estimado de Mercado:</h2>", unsafe_allow_html=True)
-        st.markdown(f"<h1 style='text-align: center;'>{prediccion:,.2f}</h1>", unsafe_allow_html=True)
-        st.caption(f"*Este valor es una estimación basada en inteligencia artificial y las características ingresadas.")
+        st.success("✅ Estimación Completada")
+        st.markdown(f"<h3 style='text-align: center; color: gray;'>Precio Sugerido de Venta:</h3>", unsafe_allow_html=True)
+        st.markdown(f"<h1 style='text-align: center; color: #007bff;'>{prediccion:,.2f}</h1>", unsafe_allow_html=True)
         
     except Exception as e:
-        st.error("Hubo un problema con los datos ingresados. Por favor verifique e intente nuevamente.")
+        st.error(f"Error en el cálculo. Verifique los datos. Detalle: {e}")
